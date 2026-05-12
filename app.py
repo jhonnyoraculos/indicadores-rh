@@ -953,19 +953,20 @@ def render_risk_legend(value: float) -> None:
     )
 
 
-def render_risk_scale(value: float) -> None:
+def render_risk_scale(value: float, period_label: str = "") -> None:
     label, color, message = risk_level(value)
     scale_max = max(8.0, value * 1.15)
     low_width = min(3 / scale_max * 100, 100)
     medium_width = min(2 / scale_max * 100, max(100 - low_width, 0))
     high_width = max(100 - low_width - medium_width, 0)
     marker_left = min(value / scale_max * 100, 100)
+    prefix = f"Turnover de {period_label}:" if period_label else "Turnover atual:"
 
     st.markdown(
         f"""
         <div class="risk-panel">
             <h3>Risco de turnover</h3>
-            <p>Turnover atual: <strong style="color:{color};">{format_percent(value)}</strong> - {label} risco. {message}</p>
+            <p>{prefix} <strong style="color:{color};">{format_percent(value)}</strong> - {label} risco. {message}</p>
             <div class="risk-scale">
                 <div class="risk-segment risk-low" style="width:{low_width:.2f}%"></div>
                 <div class="risk-segment risk-medium" style="width:{medium_width:.2f}%"></div>
@@ -1026,6 +1027,53 @@ def period_peak(grouped: pd.DataFrame, column: str) -> tuple[str, float]:
     return str(row["periodo"]), float(row[column])
 
 
+def latest_available_period_summary(grouped: pd.DataFrame) -> dict[str, float | str]:
+    active = active_periods(grouped)
+    if active.empty:
+        return {
+            "periodo": "Sem dados",
+            "admissoes": 0.0,
+            "desligamentos": 0.0,
+            "colaboradores": 0.0,
+            "turnover": 0.0,
+            "rotatividade_admissional": 0.0,
+            "rotatividade_demissional": 0.0,
+            "rotatividade": 0.0,
+            "horas_ausencia": 0.0,
+            "horas_programadas": 0.0,
+            "absenteismo": 0.0,
+            "atestados": 0.0,
+            "vagas_em_aberto": 0.0,
+        }
+
+    row = active.iloc[-1]
+    colaboradores = float(row.get("colaboradores", 0.0) or 0.0)
+    admissoes = float(row.get("admissoes", 0.0) or 0.0)
+    desligamentos = float(row.get("desligamentos", 0.0) or 0.0)
+    horas_ausencia = float(row.get("horas_ausencia", 0.0) or 0.0)
+    horas_programadas = float(row.get("horas_programadas", 0.0) or 0.0)
+    atestados = float(row.get("atestados", 0.0) or 0.0)
+    vagas_em_aberto = float(row.get("vagas_em_aberto", 0.0) or 0.0)
+    rotatividade_admissional = (admissoes / colaboradores * 100) if colaboradores > 0 else 0.0
+    rotatividade_demissional = (desligamentos / colaboradores * 100) if colaboradores > 0 else 0.0
+
+    return {
+        "periodo": str(row.get("periodo", "Sem dados")),
+        "admissoes": admissoes,
+        "desligamentos": desligamentos,
+        "colaboradores": colaboradores,
+        "turnover": float(row.get("turnover_%", 0.0) or 0.0),
+        "rotatividade_admissional": rotatividade_admissional,
+        "rotatividade_demissional": rotatividade_demissional,
+        "rotatividade": rotatividade_admissional + rotatividade_demissional,
+        "horas_ausencia": horas_ausencia,
+        "horas_programadas": horas_programadas,
+        "absenteismo": float(row.get("absenteismo_%", 0.0) or 0.0),
+        "atestados": atestados,
+        "vagas_em_aberto": vagas_em_aberto,
+    }
+
+
 def turnover_trend(grouped: pd.DataFrame) -> tuple[str, str, str]:
     active = active_periods(grouped)
     if len(active) < 2:
@@ -1084,14 +1132,20 @@ def recommendation_text(summary: dict[str, float], grouped: pd.DataFrame) -> tup
     )
 
 
-def render_diagnostics(summary: dict[str, float], grouped: pd.DataFrame) -> None:
-    risk, risk_color, risk_message = risk_level(summary["turnover"])
+def render_diagnostics(summary: dict[str, float], grouped: pd.DataFrame, reference: dict[str, float | str]) -> None:
+    reference_turnover = float(reference["turnover"])
+    risk, risk_color, risk_message = risk_level(reference_turnover)
     worst_turnover_period, worst_turnover = period_peak(grouped, "turnover_%")
     worst_absence_period, worst_absence = period_peak(grouped, "absenteismo_%")
     trend, trend_text, trend_tone = turnover_trend(grouped)
     saldo = summary["admissoes"] - summary["desligamentos"]
     saldo_tone = "green" if saldo >= 0 else "red"
-    rec_title, rec_text, rec_tone = recommendation_text(summary, grouped)
+    reference_for_recommendation = {
+        **summary,
+        "turnover": reference_turnover,
+        "absenteismo": float(reference["absenteismo"]),
+    }
+    rec_title, rec_text, rec_tone = recommendation_text(reference_for_recommendation, grouped)
     border_color = {"red": "#c91532", "gold": "#a87905", "green": "#11723c"}.get(rec_tone, "#103b78")
 
     st.markdown("### Diagnóstico automático")
@@ -1138,6 +1192,21 @@ def render_diagnostics(summary: dict[str, float], grouped: pd.DataFrame) -> None
                 <div class="value">{format_number(summary["colaboradores"])}</div>
                 <p class="text">Média do total informado no período.</p>
             </div>
+            <div class="diagnostic-card gold">
+                <div class="label">Rotatividade atual</div>
+                <div class="value">{format_percent(float(reference["rotatividade"]))}</div>
+                <p class="text">Período: {reference["periodo"]}</p>
+            </div>
+            <div class="diagnostic-card green">
+                <div class="label">Rotatividade admissional</div>
+                <div class="value">{format_percent(float(reference["rotatividade_admissional"]))}</div>
+                <p class="text">Admissões sobre a base média do período {reference["periodo"]}.</p>
+            </div>
+            <div class="diagnostic-card red">
+                <div class="label">Rotatividade demissional</div>
+                <div class="value">{format_percent(float(reference["rotatividade_demissional"]))}</div>
+                <p class="text">Desligamentos sobre a base média do período {reference["periodo"]}.</p>
+            </div>
         </div>
         <div class="recommendation-box" style="border-left-color:{border_color};">
             <strong>{rec_title}</strong>
@@ -1159,22 +1228,12 @@ def render_executive_blocks(summary: dict[str, float], df: pd.DataFrame) -> None
         colaboradores_final = float(ordered.iloc[-1]["colaboradores"])
         variacao = colaboradores_final - colaboradores_inicio
 
-    rot_admissional = summary["rotatividade_admissional"]
-    rot_demissional = summary["rotatividade_demissional"]
-    rot_total = summary["rotatividade"]
     atestados = summary["atestados"]
     vagas_em_aberto = summary["vagas_em_aberto"]
 
     st.markdown(
         f"""
         <div class="exec-grid">
-            <div class="exec-card">
-                <h3>Taxa de rotatividade</h3>
-                <div class="exec-line tone-yellow"><div class="exec-label">Turnover</div><div class="exec-value">{format_percent(summary["turnover"])}</div></div>
-                <div class="exec-line tone-green"><div class="exec-label">Rotatividade admissional</div><div class="exec-value">{format_percent(rot_admissional)}</div></div>
-                <div class="exec-line tone-red"><div class="exec-label">Rotatividade demissional</div><div class="exec-value">{format_percent(rot_demissional)}</div></div>
-                <div class="exec-line tone-yellow"><div class="exec-label">Rotatividade</div><div class="exec-value">{format_percent(rot_total)}</div></div>
-            </div>
             <div class="exec-card">
                 <h3>Colaboradores</h3>
                 <div class="exec-line tone-blue"><div class="exec-label">Início do período</div><div class="exec-value">{format_number(colaboradores_inicio)}</div></div>
@@ -1185,7 +1244,7 @@ def render_executive_blocks(summary: dict[str, float], df: pd.DataFrame) -> None
                 <h3>Movimentação</h3>
                 <div class="exec-line tone-green"><div class="exec-label">Contratações</div><div class="exec-value">{format_number(summary["admissoes"])}</div></div>
                 <div class="exec-line tone-red"><div class="exec-label">Desligamentos</div><div class="exec-value">{format_number(summary["desligamentos"])}</div></div>
-                <div class="exec-line tone-yellow"><div class="exec-label">Rotatividade total</div><div class="exec-value">{format_percent(rot_total)}</div></div>
+                <div class="exec-line tone-yellow"><div class="exec-label">Saldo</div><div class="exec-value">{format_number(summary["admissoes"] - summary["desligamentos"])}</div></div>
             </div>
             <div class="exec-card">
                 <h3>Informações complementares</h3>
@@ -2531,14 +2590,18 @@ def render_dashboard(df: pd.DataFrame) -> None:
         line_title = "Indicadores ano a ano"
         rotativity_title = "Taxa de rotatividade anual"
 
+    reference_summary = latest_available_period_summary(grouped)
+    reference_period = str(reference_summary["periodo"])
+    reference_turnover = float(reference_summary["turnover"])
+
     st.markdown(
         f"""
         <div class="panel-title">
             <div>
                 <h2>Resumo executivo</h2>
-                <span>{period_text}</span>
+                <span>{period_text}<br/>Último período com dados: {reference_period}</span>
             </div>
-            <div class="status-pill">Rotatividade {format_percent(summary["rotatividade"])}</div>
+            <div class="status-pill">Turnover atual {format_percent(reference_turnover)}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -2553,19 +2616,12 @@ def render_dashboard(df: pd.DataFrame) -> None:
             width="stretch",
         )
 
-    left, right = st.columns([0.24, 0.76])
-    with left:
-        st.markdown("**Rotatividade do período**")
-        st.plotly_chart(build_rotativity_pie(summary), width="stretch", config={"displayModeBar": False})
-        render_rotativity_legend(summary)
+    line_chart = build_indicator_line_chart(grouped, line_title)
+    if line_chart is not None:
+        st.plotly_chart(line_chart, width="stretch", config={"displayModeBar": False})
+    render_risk_scale(reference_turnover, reference_period)
 
-    with right:
-        line_chart = build_indicator_line_chart(grouped, line_title)
-        if line_chart is not None:
-            st.plotly_chart(line_chart, width="stretch", config={"displayModeBar": False})
-        render_risk_scale(summary["turnover"])
-
-    render_diagnostics(summary, grouped)
+    render_diagnostics(summary, grouped, reference_summary)
     render_executive_blocks(summary, selected_df)
 
     rotativity_chart = build_rotativity_chart(grouped, rotativity_title)
