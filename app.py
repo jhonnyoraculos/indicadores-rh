@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 import pandas as pd
 import plotly.graph_objects as go
+import plotly.io as pio
 from plotly.subplots import make_subplots
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -1228,6 +1229,24 @@ def pdf_table(data: list[list[object]], col_widths: list[float] | None = None) -
     return table
 
 
+def pdf_chart_image(figure: go.Figure | None, width_cm: float = 18.0) -> PdfImage | None:
+    if figure is None:
+        return None
+
+    try:
+        image_bytes = pio.to_image(figure, format="png", scale=2)
+    except Exception:
+        return None
+
+    buffer = BytesIO(image_bytes)
+    width_points = width_cm * cm
+    if figure.layout.width and figure.layout.height:
+        height_points = width_points * (figure.layout.height / figure.layout.width)
+    else:
+        height_points = width_points * 0.6
+    return PdfImage(buffer, width=width_points, height=height_points)
+
+
 def build_pdf_report(
     summary: dict[str, float],
     grouped: pd.DataFrame,
@@ -1371,6 +1390,39 @@ def build_pdf_report(
         )
     )
 
+    line_title = (
+        "Indicadores por dia da semana"
+        if analysis_type == "Semanal"
+        else f"Indicadores mÃªs a mÃªs - {period_text.split()[-1]}"
+        if analysis_type == "Mensal"
+        else "Indicadores ano a ano"
+    )
+    rotativity_title = (
+        "AdmissÃµes, desligamentos e turnover da semana"
+        if analysis_type == "Semanal"
+        else f"Taxa de rotatividade - {period_text.split()[-1]}"
+        if analysis_type == "Mensal"
+        else "Taxa de rotatividade anual"
+    )
+    chart_images = [
+        pdf_chart_image(build_indicator_line_chart(grouped, line_title)),
+        pdf_chart_image(build_rotativity_chart(grouped, rotativity_title)),
+    ]
+    chart_images = [chart for chart in chart_images if chart is not None]
+
+    elements.append(Paragraph("GrÃ¡ficos do perÃ­odo", styles["SectionTitle"]))
+    if chart_images:
+        for chart_image in chart_images:
+            elements.append(chart_image)
+            elements.append(Spacer(1, 0.18 * cm))
+    else:
+        elements.append(
+            Paragraph(
+                "NÃ£o foi possÃ­vel incorporar os grÃ¡ficos ao PDF neste ambiente.",
+                styles["BodySmall"],
+            )
+        )
+
     display = format_display_table(grouped)
     if not display.empty:
         elements.append(Paragraph("Tabela usada nos gráficos", styles["SectionTitle"]))
@@ -1460,7 +1512,7 @@ def inject_styles() -> None:
                 --ink: #172033;
                 --muted: #667085;
                 --line: #d9e2ee;
-                --page: #f5f7fb;
+                --page: #ffffff;
                 --card: #ffffff;
             }
 
@@ -1475,7 +1527,7 @@ def inject_styles() -> None:
             }
 
             [data-testid="stHeader"] {
-                background: rgba(245, 247, 251, 0.82);
+                background: rgba(255, 255, 255, 0.92);
             }
 
             .title-block p {
