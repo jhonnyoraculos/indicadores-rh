@@ -53,6 +53,12 @@ INDICADORES_TABLE = SQLATable(
     Column("horas_ausencia", Float, nullable=False),
     Column("horas_programadas", Float, nullable=False),
 )
+APP_STATE_TABLE = SQLATable(
+    "app_state",
+    METADATA,
+    Column("key", Integer, primary_key=True, autoincrement=False),
+    Column("value", Integer, nullable=False),
+)
 
 
 def read_secret(*keys: str) -> str:
@@ -196,12 +202,21 @@ def ensure_database_ready() -> None:
     try:
         METADATA.create_all(engine)
         with engine.begin() as connection:
+            migration_flag = connection.execute(
+                select(APP_STATE_TABLE.c.value).where(APP_STATE_TABLE.c.key == 1)
+            ).scalar_one_or_none()
+
             row_count = connection.execute(select(INDICADORES_TABLE.c.id)).first()
-            if row_count is None and LEGACY_CSV_PATH.exists():
+            if migration_flag is None and row_count is None and LEGACY_CSV_PATH.exists():
                 legacy_df = pd.read_csv(LEGACY_CSV_PATH)
                 records = database_records(legacy_df)
                 if records:
                     connection.execute(insert(INDICADORES_TABLE), records)
+                connection.execute(
+                    insert(APP_STATE_TABLE).values(key=1, value=1)
+                )
+            elif migration_flag is None:
+                connection.execute(insert(APP_STATE_TABLE).values(key=1, value=1))
     except (OSError, SQLAlchemyError, ValueError) as error:
         raise DatabaseStorageError(str(error)) from error
 
