@@ -275,6 +275,10 @@ def format_number(value: float) -> str:
     return f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def format_percent_label(value: float) -> str:
+    return "" if abs(float(value)) < 0.005 else format_percent(value)
+
+
 def escape_pdf_text(value: object) -> str:
     text = str(value)
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -614,7 +618,7 @@ def build_indicator_chart(df: pd.DataFrame, title: str = "Comparativo dos indica
             name="Turnover",
             x=df["periodo"],
             y=df["turnover_%"],
-            text=df["turnover_%"].map(format_percent),
+            text=df["turnover_%"].map(format_percent_label),
             textposition="outside",
             marker_color="#103b78",
             width=0.28,
@@ -626,7 +630,7 @@ def build_indicator_chart(df: pd.DataFrame, title: str = "Comparativo dos indica
             name="Absenteísmo",
             x=df["periodo"],
             y=df["absenteismo_%"],
-            text=df["absenteismo_%"].map(format_percent),
+            text=df["absenteismo_%"].map(format_percent_label),
             textposition="outside",
             marker_color="#11723c",
             width=0.28,
@@ -783,7 +787,7 @@ def build_indicator_line_chart(df: pd.DataFrame, title: str):
             x=df["periodo"],
             y=df["turnover_%"],
             mode="lines+markers+text",
-            text=df["turnover_%"].map(format_percent),
+            text=df["turnover_%"].map(format_percent_label),
             textposition="top center",
             line=dict(color="#c91532", width=3),
             marker=dict(size=8),
@@ -796,7 +800,7 @@ def build_indicator_line_chart(df: pd.DataFrame, title: str):
             x=df["periodo"],
             y=df["absenteismo_%"],
             mode="lines+markers+text",
-            text=df["absenteismo_%"].map(format_percent),
+            text=df["absenteismo_%"].map(format_percent_label),
             textposition="top center",
             textfont=dict(color="#0b6b3a"),
             line=dict(color="#0b6b3a", width=4),
@@ -854,7 +858,7 @@ def build_rotativity_chart(df: pd.DataFrame, title: str):
             x=df["periodo"],
             y=df["turnover_%"],
             mode="lines+markers+text",
-            text=df["turnover_%"].map(format_percent),
+            text=df["turnover_%"].map(format_percent_label),
             textposition="top center",
             line=dict(color="#9b7a08", width=3),
             marker=dict(size=8),
