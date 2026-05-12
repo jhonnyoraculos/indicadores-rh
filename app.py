@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import date, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -13,12 +14,16 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Image as PdfImage
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from sqlalchemy import Column, Date, Float, Integer, MetaData, Table as SQLATable, create_engine, delete, insert, select
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 import streamlit as st
 
 
 BASE_DIR = Path(__file__).parent
 LOGO_PATH = BASE_DIR / "logo-jr.png"
-DATA_PATH = BASE_DIR / "dados_indicadores_rh.csv"
+LEGACY_CSV_PATH = BASE_DIR / "dados_indicadores_rh.csv"
+TABLE_NAME = "indicadores_rh"
 
 COLUMNS = [
     "data",
@@ -30,19 +35,124 @@ COLUMNS = [
 ]
 
 
-st.set_page_config(
-    page_title="Indicadores RH | JR Ferragens",
-    page_icon=str(LOGO_PATH) if LOGO_PATH.exists() else None,
-    layout="wide",
+class DatabaseStorageError(RuntimeError):
+    pass
+
+
+METADATA = MetaData()
+INDICADORES_TABLE = SQLATable(
+    TABLE_NAME,
+    METADATA,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("data", Date, nullable=False),
+    Column("admissoes", Integer, nullable=False),
+    Column("desligamentos", Integer, nullable=False),
+    Column("colaboradores", Float, nullable=False),
+    Column("horas_ausencia", Float, nullable=False),
+    Column("horas_programadas", Float, nullable=False),
 )
 
 
-def load_data() -> pd.DataFrame:
-    if not DATA_PATH.exists():
-        return pd.DataFrame(columns=COLUMNS)
+def read_secret(*keys: str) -> str:
+    try:
+        value = st.secrets
+        for key in keys:
+            if hasattr(value, "get"):
+                value = value.get(key)
+            elif isinstance(value, dict):
+                value = value.get(key)
+            else:
+                return ""
 
-    df = pd.read_csv(DATA_PATH)
+            if value is None:
+                return ""
+    except Exception:
+        return ""
 
+    return str(value).strip()
+
+
+def config_value(env_name: str, top_level_secret: str, nested_secret: str = "", default: str = "") -> str:
+    return (
+        os.environ.get(env_name, "").strip()
+        or read_secret(top_level_secret)
+        or (read_secret("database", nested_secret) if nested_secret else "")
+        or default
+    )
+
+
+def configured_database_url() -> str:
+    url = config_value("DATABASE_URL", "DATABASE_URL", "url")
+    if not url:
+        raise DatabaseStorageError(
+            "Configure DATABASE_URL nos Secrets do Streamlit ou no ambiente local para usar um banco externo."
+        )
+    return url
+
+
+def database_url() -> str:
+    url = configured_database_url()
+    if url.startswith("postgres://"):
+        return "postgresql+psycopg://" + url[len("postgres://") :]
+    if url.startswith("postgresql://") and not url.startswith("postgresql+"):
+        return "postgresql+psycopg://" + url[len("postgresql://") :]
+    return url
+
+
+@st.cache_resource(show_spinner=False)
+def get_engine(db_url: str) -> Engine:
+    connect_args = {"check_same_thread": False} if db_url.startswith("sqlite") else {}
+    return create_engine(db_url, future=True, connect_args=connect_args)
+
+
+def database_engine() -> Engine:
+    return get_engine(database_url())
+
+
+def stop_with_storage_error(action: str, error: Exception) -> None:
+    st.error(f"Nao foi possivel {action} os dados no banco. Detalhe: {error}")
+    st.stop()
+
+
+def persistence_label() -> str:
+    return "no banco de dados"
+
+
+def render_persistence_notice() -> None:
+    st.caption("Salvamento ativo no banco de dados externo configurado em DATABASE_URL.")
+
+
+def app_password() -> str:
+    return os.environ.get("APP_PASSWORD", "").strip() or read_secret("APP_PASSWORD") or read_secret("app", "password")
+
+
+def write_access_granted(key_suffix: str) -> bool:
+    password = app_password()
+    if not password:
+        return True
+
+    if st.session_state.get("write_access_granted"):
+        return True
+
+    typed_password = st.text_input(
+        "Senha para editar dados",
+        type="password",
+        key=f"write_access_password_{key_suffix}",
+    )
+    if typed_password == password:
+        st.session_state["write_access_granted"] = True
+        st.success("Acesso liberado.")
+        st.rerun()
+
+    if typed_password:
+        st.error("Senha incorreta.")
+    else:
+        st.info("Informe a senha para incluir, editar ou apagar lançamentos.")
+
+    return False
+
+
+def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     if "colaboradores" not in df.columns:
         inicio = pd.to_numeric(df.get("colaboradores_inicio", 0), errors="coerce").fillna(0)
         fim = pd.to_numeric(df.get("colaboradores_fim", 0), errors="coerce").fillna(0)
@@ -52,16 +162,72 @@ def load_data() -> pd.DataFrame:
         if column not in df.columns:
             df[column] = 0
 
-    df = df[COLUMNS].copy()
-    df["data"] = pd.to_datetime(df["data"], errors="coerce").dt.date
+    result = df[COLUMNS].copy()
+    result["data"] = pd.to_datetime(result["data"], errors="coerce").dt.date
     numeric_columns = [column for column in COLUMNS if column != "data"]
-    df[numeric_columns] = df[numeric_columns].apply(pd.to_numeric, errors="coerce").fillna(0)
-    return df.dropna(subset=["data"]).sort_values("data").reset_index(drop=True)
+    result[numeric_columns] = result[numeric_columns].apply(pd.to_numeric, errors="coerce").fillna(0)
+    return result.dropna(subset=["data"]).sort_values("data").reset_index(drop=True)
+
+
+def database_records(df: pd.DataFrame) -> list[dict[str, object]]:
+    return normalize_dataframe(df).to_dict(orient="records")
+
+
+def ensure_database_ready() -> None:
+    engine = database_engine()
+
+    try:
+        METADATA.create_all(engine)
+        with engine.begin() as connection:
+            row_count = connection.execute(select(INDICADORES_TABLE.c.id)).first()
+            if row_count is None and LEGACY_CSV_PATH.exists():
+                legacy_df = pd.read_csv(LEGACY_CSV_PATH)
+                records = database_records(legacy_df)
+                if records:
+                    connection.execute(insert(INDICADORES_TABLE), records)
+    except (OSError, SQLAlchemyError, ValueError) as error:
+        raise DatabaseStorageError(str(error)) from error
+
+
+st.set_page_config(
+    page_title="Indicadores RH | JR Ferragens",
+    page_icon=str(LOGO_PATH) if LOGO_PATH.exists() else None,
+    layout="wide",
+)
+
+
+def load_data() -> pd.DataFrame:
+    try:
+        ensure_database_ready()
+        query = select(
+            INDICADORES_TABLE.c.data,
+            INDICADORES_TABLE.c.admissoes,
+            INDICADORES_TABLE.c.desligamentos,
+            INDICADORES_TABLE.c.colaboradores,
+            INDICADORES_TABLE.c.horas_ausencia,
+            INDICADORES_TABLE.c.horas_programadas,
+        ).order_by(INDICADORES_TABLE.c.data, INDICADORES_TABLE.c.id)
+        with database_engine().connect() as connection:
+            df = pd.read_sql(query, connection)
+    except (DatabaseStorageError, SQLAlchemyError, ValueError) as error:
+        stop_with_storage_error("carregar", error)
+
+    if df.empty:
+        return pd.DataFrame(columns=COLUMNS)
+
+    return normalize_dataframe(df)
 
 
 def save_data(df: pd.DataFrame) -> None:
-    df = df[COLUMNS].copy()
-    df.to_csv(DATA_PATH, index=False)
+    try:
+        ensure_database_ready()
+        records = database_records(df)
+        with database_engine().begin() as connection:
+            connection.execute(delete(INDICADORES_TABLE))
+            if records:
+                connection.execute(insert(INDICADORES_TABLE), records)
+    except (DatabaseStorageError, SQLAlchemyError, ValueError) as error:
+        stop_with_storage_error("salvar", error)
 
 
 def format_percent(value: float) -> str:
@@ -596,9 +762,10 @@ def build_indicator_line_chart(df: pd.DataFrame, title: str):
             y=df["absenteismo_%"],
             mode="lines+markers+text",
             text=df["absenteismo_%"].map(format_percent),
-            textposition="bottom center",
-            line=dict(color="#11723c", width=3),
-            marker=dict(size=8),
+            textposition="top center",
+            textfont=dict(color="#0b6b3a"),
+            line=dict(color="#0b6b3a", width=4),
+            marker=dict(size=10, color="#0b6b3a", line=dict(color="#ffffff", width=2)),
             hovertemplate="<b>%{x}</b><br>Absenteísmo: %{y:.2f}%<extra></extra>",
         )
     )
@@ -1738,6 +1905,9 @@ def render_form(df: pd.DataFrame) -> pd.DataFrame:
         '<p class="section-note">Cadastre uma linha por dia, semana ou mês. O painel agrupa automaticamente conforme a visão escolhida.</p>',
         unsafe_allow_html=True,
     )
+    render_persistence_notice()
+    if not write_access_granted("form"):
+        return df
 
     with st.form("novo_registro", clear_on_submit=True):
         col1, col2, col3 = st.columns(3)
@@ -1797,7 +1967,7 @@ def render_form(df: pd.DataFrame) -> pd.DataFrame:
         )
         updated = pd.concat([df, new_row], ignore_index=True)
         save_data(updated)
-        st.success("Registro salvo. Gráficos atualizados.")
+        st.success(f"Registro salvo {persistence_label()}. Gráficos atualizados.")
         st.rerun()
 
     return df
@@ -2052,12 +2222,15 @@ def render_history(df: pd.DataFrame) -> None:
         '<p class="section-note">Consulte, baixe ou edite os lançamentos que alimentam o painel.</p>',
         unsafe_allow_html=True,
     )
+    render_persistence_notice()
 
     if df.empty:
         st.info("Nenhum lançamento cadastrado.")
         return
 
     st.dataframe(format_history_table(df), width="stretch", hide_index=True)
+    if not write_access_granted("history"):
+        return
 
     with st.expander("Editar lançamentos", expanded=False):
         st.caption("Altere os valores na tabela abaixo e clique em salvar.")
@@ -2084,7 +2257,7 @@ def render_history(df: pd.DataFrame) -> None:
             edited[numeric_columns] = edited[numeric_columns].apply(pd.to_numeric, errors="coerce").fillna(0)
             edited = edited.dropna(subset=["data"])
             save_data(edited)
-            st.success("Alterações salvas.")
+            st.success(f"Alterações salvas {persistence_label()}.")
             st.rerun()
 
     csv = format_history_table(df).to_csv(index=False, sep=";").encode("utf-8-sig")
@@ -2099,7 +2272,7 @@ def render_history(df: pd.DataFrame) -> None:
         )
     with action2:
         if st.button("Apagar todos os registros", type="secondary"):
-            DATA_PATH.unlink(missing_ok=True)
+            save_data(pd.DataFrame(columns=COLUMNS))
             st.rerun()
 
 
