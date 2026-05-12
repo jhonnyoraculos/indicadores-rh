@@ -11,9 +11,6 @@ Exemplo de Secrets:
 
 ```toml
 DATABASE_URL = "postgresql://usuario:senha@host:5432/banco?sslmode=require"
-
-# Opcional, mas recomendado para impedir alteracoes publicas
-APP_PASSWORD = "defina_uma_senha"
 ```
 
 Importante:

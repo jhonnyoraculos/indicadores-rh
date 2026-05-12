@@ -18,6 +18,7 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 from sqlalchemy import Column, Date, Float, Integer, MetaData, Table as SQLATable, create_engine, delete, insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.pool import NullPool
 import streamlit as st
 
 
@@ -114,16 +115,49 @@ def database_url() -> str:
 
 @st.cache_resource(show_spinner=False)
 def get_engine(db_url: str) -> Engine:
-    connect_args = {"check_same_thread": False} if db_url.startswith("sqlite") else {}
-    return create_engine(db_url, future=True, connect_args=connect_args)
+    if db_url.startswith("sqlite"):
+        return create_engine(db_url, future=True, connect_args={"check_same_thread": False})
+
+    return create_engine(
+        db_url,
+        future=True,
+        poolclass=NullPool,
+        pool_pre_ping=True,
+        connect_args={
+            "connect_timeout": 10,
+            "keepalives": 1,
+            "keepalives_idle": 30,
+            "keepalives_interval": 10,
+            "keepalives_count": 5,
+        },
+    )
 
 
 def database_engine() -> Engine:
     return get_engine(database_url())
 
 
+def storage_error_message(error: Exception) -> str:
+    detail = str(error)
+    normalized = detail.lower()
+
+    if "ssl connection has been closed unexpectedly" in normalized or "consuming input failed" in normalized:
+        return (
+            "A conexao com o banco foi encerrada durante a consulta. "
+            "Tente atualizar a pagina. Se continuar, o app vai precisar reconectar ao Neon."
+        )
+    if "failed to resolve host" in normalized:
+        return "O host informado na DATABASE_URL nao foi encontrado. Revise a connection string do banco."
+    if "password authentication failed" in normalized:
+        return "Usuario ou senha do banco invalidos. Revise a DATABASE_URL configurada no Streamlit."
+    if "connect timeout" in normalized or "timeout expired" in normalized:
+        return "O banco demorou demais para responder. Tente novamente em alguns segundos."
+
+    return f"Nao foi possivel conectar ao banco. Detalhe: {detail}"
+
+
 def stop_with_storage_error(action: str, error: Exception) -> None:
-    st.error(f"Nao foi possivel {action} os dados no banco. Detalhe: {error}")
+    st.error(f"Nao foi possivel {action} os dados no banco. {storage_error_message(error)}")
     st.stop()
 
 
@@ -133,36 +167,6 @@ def persistence_label() -> str:
 
 def render_persistence_notice() -> None:
     st.caption("Salvamento ativo no banco de dados externo configurado em DATABASE_URL.")
-
-
-def app_password() -> str:
-    return os.environ.get("APP_PASSWORD", "").strip() or read_secret("APP_PASSWORD") or read_secret("app", "password")
-
-
-def write_access_granted(key_suffix: str) -> bool:
-    password = app_password()
-    if not password:
-        return True
-
-    if st.session_state.get("write_access_granted"):
-        return True
-
-    typed_password = st.text_input(
-        "Senha para editar dados",
-        type="password",
-        key=f"write_access_password_{key_suffix}",
-    )
-    if typed_password == password:
-        st.session_state["write_access_granted"] = True
-        st.success("Acesso liberado.")
-        st.rerun()
-
-    if typed_password:
-        st.error("Senha incorreta.")
-    else:
-        st.info("Informe a senha para incluir, editar ou apagar lançamentos.")
-
-    return False
 
 
 def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
@@ -1921,8 +1925,6 @@ def render_form(df: pd.DataFrame) -> pd.DataFrame:
         unsafe_allow_html=True,
     )
     render_persistence_notice()
-    if not write_access_granted("form"):
-        return df
 
     with st.form("novo_registro", clear_on_submit=True):
         col1, col2, col3 = st.columns(3)
@@ -2244,8 +2246,6 @@ def render_history(df: pd.DataFrame) -> None:
         return
 
     st.dataframe(format_history_table(df), width="stretch", hide_index=True)
-    if not write_access_granted("history"):
-        return
 
     with st.expander("Editar lançamentos", expanded=False):
         st.caption("Altere os valores na tabela abaixo e clique em salvar.")
