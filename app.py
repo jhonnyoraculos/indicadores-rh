@@ -28,6 +28,7 @@ LOGO_PATH = BASE_DIR / "logo-jr.png"
 LEGACY_CSV_PATH = BASE_DIR / "dados_indicadores_rh.csv"
 TABLE_NAME = "indicadores_rh"
 ATESTADO_HOURS = 8.0
+ABSENCE_HOURS_UNIT = 8.0
 PROGRAMMED_HOURS_UNIT = 220.0
 
 COLUMNS = [
@@ -301,6 +302,10 @@ def escape_pdf_text(value: object) -> str:
 
 def absence_hours_with_certificates(hours_ausencia: float, atestados: float) -> float:
     return float(hours_ausencia) + float(atestados) * ATESTADO_HOURS
+
+
+def absence_hours_from_units(units: float) -> float:
+    return float(units) * ABSENCE_HOURS_UNIT
 
 
 def programmed_hours_from_units(units: float) -> float:
@@ -2295,9 +2300,11 @@ def inject_styles() -> None:
 
 def render_form(df: pd.DataFrame) -> pd.DataFrame:
     default_colaboradores = 0
+    default_absence_units = 0.0
     default_programmed_hours_units = 0
     if not df.empty:
         default_colaboradores = int(df.sort_values("data").iloc[-1]["colaboradores"])
+        default_absence_units = round(float(df.sort_values("data").iloc[-1]["horas_ausencia"]) / ABSENCE_HOURS_UNIT, 3)
         default_programmed_hours_units = int(round(float(df.sort_values("data").iloc[-1]["horas_programadas"]) / PROGRAMMED_HOURS_UNIT))
 
     st.markdown("### Novo lançamento")
@@ -2333,12 +2340,15 @@ def render_form(df: pd.DataFrame) -> pd.DataFrame:
                 help="Informe o total atual de colaboradores usado como base do cálculo.",
             )
         with col6:
-            horas_ausencia = st.number_input(
-                "Horas de ausência",
+            horas_ausencia_unidades = st.number_input(
+                "Horas de ausência (1 = 8h)",
                 min_value=0.0,
-                step=0.5,
-                help="Faltas, atrasos e saídas antecipadas em horas. Os atestados entram separadamente com 8 horas por unidade.",
+                value=default_absence_units,
+                step=0.125,
+                help="Informe a base de ausência do período. Ex.: 1 = 8h, 0,5 = 4h, 1,875 = 15h. Os atestados entram separadamente com 8 horas por unidade.",
             )
+            horas_ausencia = absence_hours_from_units(horas_ausencia_unidades)
+            st.caption(f"Total calculado: {format_number(horas_ausencia)} horas")
         with col7:
             horas_programadas_unidades = st.number_input(
                 "Horas programadas (1 = 220h)",
@@ -2400,7 +2410,7 @@ def render_fill_guide() -> None:
             </div>
             <div class="formula-card">
                 <strong>Absenteísmo</strong>
-                <span>(Horas de ausência + atestados x 8h) / Horas programadas calculadas (1 = 220h) x 100</span>
+                <span>(Horas de ausência calculadas (1 = 8h) + atestados x 8h) / Horas programadas calculadas (1 = 220h) x 100</span>
             </div>
         </div>
         """,
@@ -2659,8 +2669,11 @@ def render_history(df: pd.DataFrame) -> None:
     st.dataframe(format_history_table(df), width="stretch", hide_index=True)
 
     with st.expander("Editar lançamentos", expanded=False):
-        st.caption("Altere os valores na tabela abaixo e clique em salvar. Em horas programadas, 1 equivale a 220h.")
+        st.caption("Altere os valores na tabela abaixo e clique em salvar. Em horas de ausência, 1 equivale a 8h. Em horas programadas, 1 equivale a 220h.")
         editable_df = df.sort_values("data", ascending=False).reset_index(drop=True).copy()
+        editable_df["horas_ausencia"] = editable_df["horas_ausencia"].apply(
+            lambda value: round(float(value or 0.0) / ABSENCE_HOURS_UNIT, 3)
+        )
         editable_df["horas_programadas"] = editable_df["horas_programadas"].apply(
             lambda value: round(float(value or 0.0) / PROGRAMMED_HOURS_UNIT, 2)
         )
@@ -2675,7 +2688,7 @@ def render_history(df: pd.DataFrame) -> None:
                 "desligamentos": st.column_config.NumberColumn("Desligamentos", min_value=0, step=1),
                 "atestados": st.column_config.NumberColumn("Atestados", min_value=0, step=1),
                 "colaboradores": st.column_config.NumberColumn("Colaboradores", min_value=0, step=1),
-                "horas_ausencia": st.column_config.NumberColumn("Horas de ausência", min_value=0.0, step=0.5),
+                "horas_ausencia": st.column_config.NumberColumn("Horas de ausência (1 = 8h)", min_value=0.0, step=0.125),
                 "horas_programadas": st.column_config.NumberColumn("Horas programadas (1 = 220h)", min_value=0.0, step=1.0),
                 "vagas_em_aberto": st.column_config.NumberColumn("Vagas em aberto", min_value=0, step=1),
             },
@@ -2687,6 +2700,7 @@ def render_history(df: pd.DataFrame) -> None:
             edited["data"] = pd.to_datetime(edited["data"], errors="coerce").dt.date
             numeric_columns = [column for column in COLUMNS if column != "data"]
             edited[numeric_columns] = edited[numeric_columns].apply(pd.to_numeric, errors="coerce").fillna(0)
+            edited["horas_ausencia"] = edited["horas_ausencia"].apply(absence_hours_from_units)
             edited["horas_programadas"] = edited["horas_programadas"].apply(programmed_hours_from_units)
             edited = edited.dropna(subset=["data"])
             save_data(edited)
