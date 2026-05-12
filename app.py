@@ -165,11 +165,11 @@ def storage_error_message(error: Exception) -> str:
     if "connect timeout" in normalized or "timeout expired" in normalized:
         return "O banco demorou demais para responder. Tente novamente em alguns segundos."
 
-    return f"Nao foi possivel conectar ao banco. Detalhe: {detail}"
+    return f"Não foi possível conectar ao banco. Detalhe: {detail}"
 
 
 def stop_with_storage_error(action: str, error: Exception) -> None:
-    st.error(f"Nao foi possivel {action} os dados no banco. {storage_error_message(error)}")
+    st.error(f"Não foi possível {action} os dados no banco. {storage_error_message(error)}")
     st.stop()
 
 
@@ -1581,12 +1581,12 @@ def build_pdf_report(
     line_title = (
         "Indicadores por dia da semana"
         if analysis_type == "Semanal"
-        else f"Indicadores mes a mes - {period_text.split()[-1]}"
+        else f"Indicadores mês a mês - {period_text.split()[-1]}"
         if analysis_type == "Mensal"
         else "Indicadores ano a ano"
     )
     rotativity_title = (
-        "Admissoes, desligamentos e turnover da semana"
+        "Admissões, desligamentos e turnover da semana"
         if analysis_type == "Semanal"
         else f"Taxa de rotatividade - {period_text.split()[-1]}"
         if analysis_type == "Mensal"
@@ -1599,7 +1599,7 @@ def build_pdf_report(
     chart_images = [chart for chart in chart_images if chart is not None]
 
     elements.append(CondPageBreak(11 * cm))
-    elements.append(Paragraph("Graficos do periodo", styles["SectionTitle"]))
+    elements.append(Paragraph("Gráficos do período", styles["SectionTitle"]))
     if chart_images:
         for chart_image in chart_images:
             elements.append(chart_image)
@@ -1607,7 +1607,7 @@ def build_pdf_report(
     else:
         elements.append(
             Paragraph(
-                "Nao foi possivel incorporar os graficos ao PDF neste ambiente.",
+                "Não foi possível incorporar os gráficos ao PDF neste ambiente.",
                 styles["BodySmall"],
             )
         )
