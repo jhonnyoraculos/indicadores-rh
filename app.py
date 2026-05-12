@@ -16,7 +16,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Image as PdfImage
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-from sqlalchemy import Column, Date, Float, Integer, MetaData, Table as SQLATable, create_engine, delete, insert, select
+from sqlalchemy import Column, Date, Float, Integer, MetaData, Table as SQLATable, create_engine, delete, insert, inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import NullPool
@@ -35,6 +35,8 @@ COLUMNS = [
     "colaboradores",
     "horas_ausencia",
     "horas_programadas",
+    "atestados",
+    "vagas_em_aberto",
 ]
 
 
@@ -53,6 +55,8 @@ INDICADORES_TABLE = SQLATable(
     Column("colaboradores", Float, nullable=False),
     Column("horas_ausencia", Float, nullable=False),
     Column("horas_programadas", Float, nullable=False),
+    Column("atestados", Integer, nullable=False, default=0),
+    Column("vagas_em_aberto", Integer, nullable=False, default=0),
 )
 APP_STATE_TABLE = SQLATable(
     "app_state",
@@ -203,6 +207,13 @@ def ensure_database_ready() -> None:
     try:
         METADATA.create_all(engine)
         with engine.begin() as connection:
+            existing_columns = {column["name"] for column in inspect(connection).get_columns(TABLE_NAME)}
+            for extra_column in ["atestados", "vagas_em_aberto"]:
+                if extra_column not in existing_columns:
+                    connection.execute(
+                        text(f"ALTER TABLE {TABLE_NAME} ADD COLUMN {extra_column} INTEGER NOT NULL DEFAULT 0")
+                    )
+
             migration_flag = connection.execute(
                 select(APP_STATE_TABLE.c.value).where(APP_STATE_TABLE.c.key == 1)
             ).scalar_one_or_none()
@@ -239,6 +250,8 @@ def load_data() -> pd.DataFrame:
             INDICADORES_TABLE.c.colaboradores,
             INDICADORES_TABLE.c.horas_ausencia,
             INDICADORES_TABLE.c.horas_programadas,
+            INDICADORES_TABLE.c.atestados,
+            INDICADORES_TABLE.c.vagas_em_aberto,
         ).order_by(INDICADORES_TABLE.c.data, INDICADORES_TABLE.c.id)
         with database_engine().connect() as connection:
             df = pd.read_sql(query, connection)
@@ -312,6 +325,8 @@ def overall_summary(df: pd.DataFrame) -> dict[str, float]:
             "turnover": 0,
             "horas_ausencia": 0,
             "absenteismo": 0,
+            "atestados": 0,
+            "vagas_em_aberto": 0,
             "registros": 0,
         }
 
@@ -321,6 +336,8 @@ def overall_summary(df: pd.DataFrame) -> dict[str, float]:
     desligamentos = sorted_df["desligamentos"].sum()
     horas_ausencia = sorted_df["horas_ausencia"].sum()
     horas_programadas = sorted_df["horas_programadas"].sum()
+    atestados = sorted_df["atestados"].sum()
+    vagas_em_aberto = float(sorted_df.iloc[-1]["vagas_em_aberto"]) if not sorted_df.empty else 0.0
 
     return {
         "desligamentos": desligamentos,
@@ -328,6 +345,8 @@ def overall_summary(df: pd.DataFrame) -> dict[str, float]:
         "turnover": (desligamentos / colaboradores * 100) if colaboradores > 0 else 0,
         "horas_ausencia": horas_ausencia,
         "absenteismo": (horas_ausencia / horas_programadas * 100) if horas_programadas > 0 else 0,
+        "atestados": atestados,
+        "vagas_em_aberto": vagas_em_aberto,
         "registros": len(sorted_df),
     }
 
@@ -370,6 +389,8 @@ def grouped_data(df: pd.DataFrame, grouping: str) -> pd.DataFrame:
                 "horas_ausencia",
                 "horas_programadas",
                 "absenteismo_%",
+                "atestados",
+                "vagas_em_aberto",
             ]
         )
 
@@ -385,6 +406,8 @@ def grouped_data(df: pd.DataFrame, grouping: str) -> pd.DataFrame:
         desligamentos = group["desligamentos"].sum()
         horas_ausencia = group["horas_ausencia"].sum()
         horas_programadas = group["horas_programadas"].sum()
+        atestados = group["atestados"].sum()
+        vagas_em_aberto = group["vagas_em_aberto"].iloc[-1]
 
         rows.append(
             {
@@ -401,6 +424,8 @@ def grouped_data(df: pd.DataFrame, grouping: str) -> pd.DataFrame:
                 "absenteismo_%": (horas_ausencia / horas_programadas * 100)
                 if horas_programadas > 0
                 else 0,
+                "atestados": atestados,
+                "vagas_em_aberto": vagas_em_aberto,
             }
         )
 
@@ -440,6 +465,8 @@ def complete_months(grouped: pd.DataFrame, selected_year: int | None) -> pd.Data
         "horas_ausencia",
         "horas_programadas",
         "absenteismo_%",
+        "atestados",
+        "vagas_em_aberto",
     ]
     base = pd.DataFrame(
         [
@@ -452,6 +479,8 @@ def complete_months(grouped: pd.DataFrame, selected_year: int | None) -> pd.Data
                 "horas_ausencia": 0.0,
                 "horas_programadas": 0.0,
                 "absenteismo_%": 0.0,
+                "atestados": 0.0,
+                "vagas_em_aberto": 0.0,
             }
             for month in range(1, 13)
         ],
@@ -502,6 +531,8 @@ def period_summary(df: pd.DataFrame) -> dict[str, float]:
             "horas_ausencia": 0.0,
             "horas_programadas": 0.0,
             "absenteismo": 0.0,
+            "atestados": 0.0,
+            "vagas_em_aberto": 0.0,
         }
 
     colaboradores = df["colaboradores"].mean()
@@ -509,6 +540,8 @@ def period_summary(df: pd.DataFrame) -> dict[str, float]:
     desligamentos = df["desligamentos"].sum()
     horas_ausencia = df["horas_ausencia"].sum()
     horas_programadas = df["horas_programadas"].sum()
+    atestados = df["atestados"].sum()
+    vagas_em_aberto = float(df.sort_values("data").iloc[-1]["vagas_em_aberto"]) if not df.empty else 0.0
     rotatividade_admissional = (admissoes / colaboradores * 100) if colaboradores > 0 else 0.0
     rotatividade_demissional = (desligamentos / colaboradores * 100) if colaboradores > 0 else 0.0
 
@@ -523,6 +556,8 @@ def period_summary(df: pd.DataFrame) -> dict[str, float]:
         "horas_ausencia": horas_ausencia,
         "horas_programadas": horas_programadas,
         "absenteismo": (horas_ausencia / horas_programadas * 100) if horas_programadas > 0 else 0.0,
+        "atestados": atestados,
+        "vagas_em_aberto": vagas_em_aberto,
     }
 
 
@@ -537,6 +572,8 @@ def weekly_data(df: pd.DataFrame, reference: date) -> tuple[pd.DataFrame, dict[s
         "horas_ausencia",
         "horas_programadas",
         "absenteismo_%",
+        "atestados",
+        "vagas_em_aberto",
     ]
     week_days = pd.DataFrame(
         [
@@ -550,6 +587,8 @@ def weekly_data(df: pd.DataFrame, reference: date) -> tuple[pd.DataFrame, dict[s
                 "horas_ausencia": 0.0,
                 "horas_programadas": 0.0,
                 "absenteismo_%": 0.0,
+                "atestados": 0.0,
+                "vagas_em_aberto": 0.0,
             }
             for offset in range(7)
         ]
@@ -583,6 +622,8 @@ def weekly_data(df: pd.DataFrame, reference: date) -> tuple[pd.DataFrame, dict[s
             colaboradores=("colaboradores", "mean"),
             horas_ausencia=("horas_ausencia", "sum"),
             horas_programadas=("horas_programadas", "sum"),
+            atestados=("atestados", "sum"),
+            vagas_em_aberto=("vagas_em_aberto", "last"),
         )
         .sort_values("data")
     )
@@ -1109,6 +1150,8 @@ def render_executive_blocks(summary: dict[str, float], df: pd.DataFrame) -> None
     rot_admissional = summary["rotatividade_admissional"]
     rot_demissional = summary["rotatividade_demissional"]
     rot_total = summary["rotatividade"]
+    atestados = summary["atestados"]
+    vagas_em_aberto = summary["vagas_em_aberto"]
 
     st.markdown(
         f"""
@@ -1132,6 +1175,12 @@ def render_executive_blocks(summary: dict[str, float], df: pd.DataFrame) -> None
                 <div class="exec-line tone-red"><div class="exec-label">Desligamentos</div><div class="exec-value">{format_number(summary["desligamentos"])}</div></div>
                 <div class="exec-line tone-yellow"><div class="exec-label">Rotatividade total</div><div class="exec-value">{format_percent(rot_total)}</div></div>
             </div>
+            <div class="exec-card">
+                <h3>Informações complementares</h3>
+                <div class="exec-line tone-green"><div class="exec-label">Atestados</div><div class="exec-value">{format_number(atestados)}</div></div>
+                <div class="exec-line tone-blue"><div class="exec-label">Vagas em aberto</div><div class="exec-value">{format_number(vagas_em_aberto)}</div></div>
+                <div class="exec-line tone-yellow"><div class="exec-label">Leitura</div><div class="exec-value">Contexto operacional</div></div>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1152,13 +1201,15 @@ def format_display_table(df: pd.DataFrame) -> pd.DataFrame:
         "horas_ausencia": "Horas de ausência",
         "horas_programadas": "Horas programadas",
         "absenteismo_%": "Absenteísmo",
+        "atestados": "Atestados",
+        "vagas_em_aberto": "Vagas em aberto",
     }
 
     for column in ["turnover_%", "absenteismo_%"]:
         if column in result:
             result[column] = result[column].map(format_percent)
 
-    for column in ["admissoes", "desligamentos", "colaboradores", "horas_ausencia", "horas_programadas"]:
+    for column in ["admissoes", "desligamentos", "colaboradores", "horas_ausencia", "horas_programadas", "atestados", "vagas_em_aberto"]:
         if column in result:
             result[column] = result[column].map(format_number)
 
@@ -1180,13 +1231,15 @@ def format_history_table(df: pd.DataFrame) -> pd.DataFrame:
         "horas_programadas": "Horas programadas",
         "turnover_%": "Turnover",
         "absenteismo_%": "Absenteísmo",
+        "atestados": "Atestados",
+        "vagas_em_aberto": "Vagas em aberto",
     }
 
     for column in ["turnover_%", "absenteismo_%"]:
         if column in result:
             result[column] = result[column].map(format_percent)
 
-    for column in ["admissoes", "desligamentos", "colaboradores", "horas_ausencia", "horas_programadas"]:
+    for column in ["admissoes", "desligamentos", "colaboradores", "horas_ausencia", "horas_programadas", "atestados", "vagas_em_aberto"]:
         if column in result:
             result[column] = result[column].map(format_number)
 
@@ -1441,17 +1494,19 @@ def build_pdf_report(
                 ["Indicador", "Resultado", "Leitura"],
                 ["Turnover", format_percent(summary["turnover"]), f"{risk} risco"],
                 ["Absenteísmo", format_percent(summary["absenteismo"]), "Horas ausentes / horas programadas"],
+                ["Atestados", format_number(summary["atestados"]), "Quantidade de atestados registrada no período"],
                 ["Rotatividade", format_percent(summary["rotatividade"]), "Admissões + desligamentos sobre colaboradores"],
                 ["Admissões", format_number(summary["admissoes"]), "Entradas no período"],
                 ["Desligamentos", format_number(summary["desligamentos"]), "Saídas no período"],
                 ["Saldo do quadro", format_number(saldo), "Admissões menos desligamentos"],
                 ["Colaboradores", format_number(summary["colaboradores"]), "Média do total informado"],
+                ["Vagas em aberto", format_number(summary["vagas_em_aberto"]), "Último valor informado no período"],
             ],
             col_widths=[5.2 * cm, 4.0 * cm, 7.2 * cm],
             emphasis_cols=[1],
             cell_text_colors={
                 (1, 1): risk_color,
-                (6, 1): signed_color(saldo),
+                (7, 1): signed_color(saldo),
             },
         )
     )
@@ -1494,17 +1549,19 @@ def build_pdf_report(
                 ["Taxa de rotatividade", "Rotatividade admissional", format_percent(summary["rotatividade_admissional"])],
                 ["Taxa de rotatividade", "Rotatividade demissional", format_percent(summary["rotatividade_demissional"])],
                 ["Taxa de rotatividade", "Rotatividade", format_percent(summary["rotatividade"])],
+                ["Absenteísmo", "Atestados", format_number(summary["atestados"])],
                 ["Colaboradores", "Início do período", format_number(colaboradores_inicio)],
                 ["Colaboradores", "Final do período", format_number(colaboradores_final)],
                 ["Colaboradores", "Variação", format_number(variacao)],
                 ["Movimentação", "Contratações", format_number(summary["admissoes"])],
                 ["Movimentação", "Desligamentos", format_number(summary["desligamentos"])],
+                ["Complementar", "Vagas em aberto", format_number(summary["vagas_em_aberto"])],
             ],
             col_widths=[5.0 * cm, 7.4 * cm, 4.0 * cm],
             emphasis_cols=[2],
             cell_text_colors={
                 (1, 2): risk_color,
-                (7, 2): signed_color(variacao),
+                (8, 2): signed_color(variacao),
             },
         )
     )
@@ -1548,10 +1605,22 @@ def build_pdf_report(
         elements.append(Paragraph("Tabela usada nos gráficos", styles["SectionTitle"]))
         table_rows = [display.columns.tolist()]
         table_rows.extend(display.head(18).values.tolist())
+        column_width_map = {
+            "Período": 1.8 * cm,
+            "Admissões": 1.55 * cm,
+            "Desligamentos": 1.75 * cm,
+            "Colaboradores": 1.9 * cm,
+            "Turnover": 1.7 * cm,
+            "Horas de ausência": 1.9 * cm,
+            "Horas programadas": 2.0 * cm,
+            "Absenteísmo": 1.8 * cm,
+            "Atestados": 1.5 * cm,
+            "Vagas em aberto": 1.9 * cm,
+        }
         elements.append(
             pdf_table(
                 table_rows,
-                col_widths=[2.2 * cm, 2.0 * cm, 2.3 * cm, 2.4 * cm, 2.0 * cm, 2.5 * cm, 2.5 * cm, 2.2 * cm],
+                col_widths=[column_width_map.get(column, 1.8 * cm) for column in display.columns.tolist()],
             )
         )
         if len(display) > 18:
@@ -2114,8 +2183,8 @@ def render_form(df: pd.DataFrame) -> pd.DataFrame:
     render_persistence_notice()
 
     with st.form("novo_registro", clear_on_submit=True):
-        col1, col2, col3 = st.columns(3)
-        col4, col5, col6 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
+        col5, col6, col7, col8 = st.columns(4)
 
         with col1:
             data = st.date_input("Data do lançamento", value=date.today(), format="DD/MM/YYYY")
@@ -2124,6 +2193,13 @@ def render_form(df: pd.DataFrame) -> pd.DataFrame:
         with col3:
             desligamentos = st.number_input("Desligamentos", min_value=0, step=1, help="Quantas pessoas saíram no período.")
         with col4:
+            atestados = st.number_input(
+                "Atestados",
+                min_value=0,
+                step=1,
+                help="Quantidade de atestados do período. Use como apoio para analisar o absenteísmo.",
+            )
+        with col5:
             colaboradores = st.number_input(
                 "Total de colaboradores",
                 min_value=0,
@@ -2131,19 +2207,26 @@ def render_form(df: pd.DataFrame) -> pd.DataFrame:
                 step=1,
                 help="Informe o total atual de colaboradores usado como base do cálculo.",
             )
-        with col5:
+        with col6:
             horas_ausencia = st.number_input(
                 "Horas de ausência",
                 min_value=0.0,
                 step=0.5,
                 help="Faltas, atrasos, atestados e saídas antecipadas em horas.",
             )
-        with col6:
+        with col7:
             horas_programadas = st.number_input(
                 "Horas programadas",
                 min_value=0.0,
                 step=0.5,
                 help="Total de horas que deveriam ser trabalhadas no período.",
+            )
+        with col8:
+            vagas_em_aberto = st.number_input(
+                "Vagas em aberto",
+                min_value=0,
+                step=1,
+                help="Quantidade de vagas abertas no período. Não entra no cálculo, mas aparece no painel e no PDF.",
             )
 
         submitted = st.form_submit_button("Salvar lançamento", type="primary", width="stretch")
@@ -2166,6 +2249,8 @@ def render_form(df: pd.DataFrame) -> pd.DataFrame:
                     "colaboradores": colaboradores,
                     "horas_ausencia": horas_ausencia,
                     "horas_programadas": horas_programadas,
+                    "atestados": atestados,
+                    "vagas_em_aberto": vagas_em_aberto,
                 }
             ]
         )
@@ -2226,6 +2311,12 @@ def render_summary(df: pd.DataFrame) -> None:
     with metric5:
         render_metric_card("Registros", format_number(summary["registros"]), "Linhas salvas no histórico.", "green")
 
+    extra1, extra2 = st.columns(2)
+    with extra1:
+        render_metric_card("Atestados", format_number(summary["atestados"]), "Quantidade registrada em todos os lançamentos.", "green")
+    with extra2:
+        render_metric_card("Vagas em aberto", format_number(summary["vagas_em_aberto"]), "Último valor informado na base completa.", "blue")
+
     render_insight(summary)
 
 
@@ -2242,6 +2333,12 @@ def render_week_status(summary: dict[str, float], start: date, end: date) -> Non
         render_metric_card("Desligamentos", format_number(summary["desligamentos"]), "Saídas na semana.", "blue")
     with metric5:
         render_metric_card("Colaboradores", format_number(summary["colaboradores"]), "Média informada.", "green")
+
+    extra1, extra2 = st.columns(2)
+    with extra1:
+        render_metric_card("Atestados", format_number(summary["atestados"]), "Quantidade registrada na semana.", "green")
+    with extra2:
+        render_metric_card("Vagas em aberto", format_number(summary["vagas_em_aberto"]), "Último valor informado na semana.", "blue")
 
     if summary["horas_programadas"] == 0 and summary["admissoes"] == 0 and summary["desligamentos"] == 0:
         st.info("Ainda não há lançamentos para essa semana.")
@@ -2445,9 +2542,11 @@ def render_history(df: pd.DataFrame) -> None:
                 "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY", required=True),
                 "admissoes": st.column_config.NumberColumn("Admissões", min_value=0, step=1),
                 "desligamentos": st.column_config.NumberColumn("Desligamentos", min_value=0, step=1),
+                "atestados": st.column_config.NumberColumn("Atestados", min_value=0, step=1),
                 "colaboradores": st.column_config.NumberColumn("Colaboradores", min_value=0, step=1),
                 "horas_ausencia": st.column_config.NumberColumn("Horas de ausência", min_value=0.0, step=0.5),
                 "horas_programadas": st.column_config.NumberColumn("Horas programadas", min_value=0.0, step=0.5),
+                "vagas_em_aberto": st.column_config.NumberColumn("Vagas em aberto", min_value=0, step=1),
             },
             key="editor_lancamentos",
         )
