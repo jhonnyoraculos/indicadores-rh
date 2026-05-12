@@ -28,6 +28,7 @@ LOGO_PATH = BASE_DIR / "logo-jr.png"
 LEGACY_CSV_PATH = BASE_DIR / "dados_indicadores_rh.csv"
 TABLE_NAME = "indicadores_rh"
 ATESTADO_HOURS = 8.0
+PROGRAMMED_HOURS_UNIT = 220.0
 
 COLUMNS = [
     "data",
@@ -300,6 +301,10 @@ def escape_pdf_text(value: object) -> str:
 
 def absence_hours_with_certificates(hours_ausencia: float, atestados: float) -> float:
     return float(hours_ausencia) + float(atestados) * ATESTADO_HOURS
+
+
+def programmed_hours_from_units(units: float) -> float:
+    return float(units) * PROGRAMMED_HOURS_UNIT
 
 
 def add_calculated_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -2290,8 +2295,10 @@ def inject_styles() -> None:
 
 def render_form(df: pd.DataFrame) -> pd.DataFrame:
     default_colaboradores = 0
+    default_programmed_hours_units = 0
     if not df.empty:
         default_colaboradores = int(df.sort_values("data").iloc[-1]["colaboradores"])
+        default_programmed_hours_units = int(round(float(df.sort_values("data").iloc[-1]["horas_programadas"]) / PROGRAMMED_HOURS_UNIT))
 
     st.markdown("### Novo lançamento")
     st.markdown(
@@ -2333,12 +2340,15 @@ def render_form(df: pd.DataFrame) -> pd.DataFrame:
                 help="Faltas, atrasos e saídas antecipadas em horas. Os atestados entram separadamente com 8 horas por unidade.",
             )
         with col7:
-            horas_programadas = st.number_input(
-                "Horas programadas",
-                min_value=0.0,
-                step=0.5,
-                help="Total de horas que deveriam ser trabalhadas no período.",
+            horas_programadas_unidades = st.number_input(
+                "Horas programadas (1 = 220h)",
+                min_value=0,
+                value=default_programmed_hours_units,
+                step=1,
+                help="Informe quantas bases de 220 horas compõem o período. Ex.: 1 = 220h, 10 = 2200h.",
             )
+            horas_programadas = programmed_hours_from_units(horas_programadas_unidades)
+            st.caption(f"Total calculado: {format_number(horas_programadas)} horas")
         with col8:
             vagas_em_aberto = st.number_input(
                 "Vagas em aberto",
@@ -2355,7 +2365,7 @@ def render_form(df: pd.DataFrame) -> pd.DataFrame:
             return df
 
         if horas_programadas <= 0:
-            st.error("Informe horas programadas para calcular o absenteísmo.")
+            st.error("Informe a quantidade de horas programadas para calcular o absenteísmo.")
             return df
 
         new_row = pd.DataFrame(
@@ -2390,7 +2400,7 @@ def render_fill_guide() -> None:
             </div>
             <div class="formula-card">
                 <strong>Absenteísmo</strong>
-                <span>(Horas de ausência + atestados x 8h) / Horas programadas x 100</span>
+                <span>(Horas de ausência + atestados x 8h) / Horas programadas calculadas (1 = 220h) x 100</span>
             </div>
         </div>
         """,
