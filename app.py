@@ -4,6 +4,7 @@ import os
 from datetime import date, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -86,6 +87,18 @@ def configured_database_url() -> str:
     if not url:
         raise DatabaseStorageError(
             "Configure DATABASE_URL nos Secrets do Streamlit ou no ambiente local para usar um banco externo."
+        )
+    parsed = urlparse(url)
+    database_name = parsed.path.lstrip("/")
+    invalid_values = {"host", "usuario", "senha", "banco", ""}
+    if (
+        parsed.hostname in invalid_values
+        or parsed.username in invalid_values
+        or parsed.password in invalid_values
+        or database_name in invalid_values
+    ):
+        raise DatabaseStorageError(
+            "A DATABASE_URL ainda esta com valores de exemplo. Troque usuario, senha, host e banco pelos dados reais do seu Postgres."
         )
     return url
 
@@ -211,6 +224,7 @@ def load_data() -> pd.DataFrame:
             df = pd.read_sql(query, connection)
     except (DatabaseStorageError, SQLAlchemyError, ValueError) as error:
         stop_with_storage_error("carregar", error)
+        return pd.DataFrame(columns=COLUMNS)
 
     if df.empty:
         return pd.DataFrame(columns=COLUMNS)
@@ -228,6 +242,7 @@ def save_data(df: pd.DataFrame) -> None:
                 connection.execute(insert(INDICADORES_TABLE), records)
     except (DatabaseStorageError, SQLAlchemyError, ValueError) as error:
         stop_with_storage_error("salvar", error)
+        return
 
 
 def format_percent(value: float) -> str:

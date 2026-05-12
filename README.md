@@ -16,6 +16,9 @@ DATABASE_URL = "postgresql://usuario:senha@host:5432/banco?sslmode=require"
 APP_PASSWORD = "defina_uma_senha"
 ```
 
+Importante:
+Substitua `usuario`, `senha`, `host` e `banco` pelos dados reais do seu Postgres. Se deixar o exemplo literal, o app nao consegue conectar.
+
 O app faz uma migracao automatica unica do CSV antigo para a tabela do banco, caso o banco esteja vazio e o arquivo legado ainda exista.
 
 ## Streamlit Cloud
