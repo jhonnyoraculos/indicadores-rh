@@ -2164,6 +2164,49 @@ def inject_styles() -> None:
             }
 
             @media (max-width: 800px) {
+                .main .block-container {
+                    padding-top: 0.8rem;
+                    padding-left: 0.75rem;
+                    padding-right: 0.75rem;
+                }
+
+                .hero-card,
+                .dashboard-shell,
+                .risk-panel,
+                .recommendation-box,
+                div[data-testid="stForm"] {
+                    padding-left: 0.9rem;
+                    padding-right: 0.9rem;
+                }
+
+                .panel-title {
+                    align-items: flex-start;
+                    flex-direction: column;
+                }
+
+                .status-pill {
+                    width: 100%;
+                    justify-content: center;
+                }
+
+                div[data-testid="stHorizontalBlock"] {
+                    gap: 0.75rem;
+                    flex-wrap: wrap;
+                }
+
+                div[data-testid="column"] {
+                    min-width: 100% !important;
+                    flex: 1 1 100% !important;
+                }
+
+                div[data-testid="stPlotlyChart"] {
+                    min-height: 320px;
+                }
+
+                div[data-testid="stPlotlyChart"] > div {
+                    width: 100% !important;
+                }
+
                 .formula-grid {
                     grid-template-columns: 1fr;
                 }
@@ -2174,6 +2217,10 @@ def inject_styles() -> None:
 
                 .diagnostic-grid {
                     grid-template-columns: 1fr;
+                }
+
+                .metric-card {
+                    min-height: auto;
                 }
             }
         </style>
