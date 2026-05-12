@@ -1197,8 +1197,10 @@ def pdf_table(
     data: list[list[object]],
     col_widths: list[float] | None = None,
     emphasis_cols: list[int] | None = None,
+    cell_text_colors: dict[tuple[int, int], str] | None = None,
 ) -> Table:
     emphasis_cols = emphasis_cols or []
+    cell_text_colors = cell_text_colors or {}
     header_style = ParagraphStyle(
         name="PdfTableHeader",
         fontName="Helvetica-Bold",
@@ -1219,15 +1221,28 @@ def pdf_table(
         fontName="Helvetica-Bold",
         textColor=colors.HexColor("#103b78"),
     )
+    custom_styles: dict[tuple[str, str], ParagraphStyle] = {}
+
+    def style_for_cell(row_index: int, col_index: int) -> ParagraphStyle:
+        base_style = header_style if row_index == 0 else emphasis_style if col_index in emphasis_cols else body_style
+        color_value = cell_text_colors.get((row_index, col_index))
+        if not color_value or row_index == 0:
+            return base_style
+
+        style_key = (base_style.name, color_value)
+        if style_key not in custom_styles:
+            custom_styles[style_key] = ParagraphStyle(
+                name=f"{base_style.name}_{len(custom_styles)}",
+                parent=base_style,
+                textColor=colors.HexColor(color_value),
+            )
+        return custom_styles[style_key]
+
     table_data = [
         [
             Paragraph(
                 escape_pdf_text(cell),
-                header_style
-                if row_index == 0
-                else emphasis_style
-                if col_index in emphasis_cols
-                else body_style,
+                style_for_cell(row_index, col_index),
             )
             for col_index, cell in enumerate(row)
         ]
@@ -1402,11 +1417,22 @@ def build_pdf_report(
     elements.append(Paragraph(f"{escape_pdf_text(analysis_type)} - {escape_pdf_text(period_text)}", styles["ReportSubtitle"]))
 
     risk, _, risk_message = risk_level(summary["turnover"])
-    trend, trend_text, _ = turnover_trend(grouped)
+    risk_color = {"Baixo": "#2c8f16", "Médio": "#a87905", "Alto": "#c91532"}.get(risk, "#103b78")
+    trend, trend_text, trend_color = turnover_trend(grouped)
     worst_turnover_period, worst_turnover = period_peak(grouped, "turnover_%")
     worst_absence_period, worst_absence = period_peak(grouped, "absenteismo_%")
-    rec_title, rec_text, _ = recommendation_text(summary, grouped)
+    rec_title, rec_text, rec_color = recommendation_text(summary, grouped)
     saldo = summary["admissoes"] - summary["desligamentos"]
+    positive_color = "#2c8f16"
+    negative_color = "#c91532"
+    neutral_color = "#103b78"
+
+    def signed_color(value: float) -> str:
+        if value > 0:
+            return positive_color
+        if value < 0:
+            return negative_color
+        return neutral_color
 
     elements.append(Paragraph("Resumo executivo", styles["SectionTitle"]))
     elements.append(
@@ -1423,6 +1449,10 @@ def build_pdf_report(
             ],
             col_widths=[5.2 * cm, 4.0 * cm, 7.2 * cm],
             emphasis_cols=[1],
+            cell_text_colors={
+                (1, 1): risk_color,
+                (6, 1): signed_color(saldo),
+            },
         )
     )
 
@@ -1439,6 +1469,11 @@ def build_pdf_report(
             ],
             col_widths=[4.0 * cm, 4.2 * cm, 8.2 * cm],
             emphasis_cols=[1],
+            cell_text_colors={
+                (1, 1): risk_color,
+                (4, 1): {"green": positive_color, "red": negative_color, "gold": "#a87905"}.get(trend_color, neutral_color),
+                (5, 1): {"green": positive_color, "red": negative_color, "gold": "#a87905"}.get(rec_color, neutral_color),
+            },
         )
     )
 
@@ -1467,6 +1502,10 @@ def build_pdf_report(
             ],
             col_widths=[5.0 * cm, 7.4 * cm, 4.0 * cm],
             emphasis_cols=[2],
+            cell_text_colors={
+                (1, 2): risk_color,
+                (7, 2): signed_color(variacao),
+            },
         )
     )
 
