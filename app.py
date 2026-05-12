@@ -2659,9 +2659,13 @@ def render_history(df: pd.DataFrame) -> None:
     st.dataframe(format_history_table(df), width="stretch", hide_index=True)
 
     with st.expander("Editar lançamentos", expanded=False):
-        st.caption("Altere os valores na tabela abaixo e clique em salvar.")
+        st.caption("Altere os valores na tabela abaixo e clique em salvar. Em horas programadas, 1 equivale a 220h.")
+        editable_df = df.sort_values("data", ascending=False).reset_index(drop=True).copy()
+        editable_df["horas_programadas"] = editable_df["horas_programadas"].apply(
+            lambda value: round(float(value or 0.0) / PROGRAMMED_HOURS_UNIT, 2)
+        )
         edited = st.data_editor(
-            df.sort_values("data", ascending=False).reset_index(drop=True),
+            editable_df,
             width="stretch",
             hide_index=True,
             num_rows="dynamic",
@@ -2672,7 +2676,7 @@ def render_history(df: pd.DataFrame) -> None:
                 "atestados": st.column_config.NumberColumn("Atestados", min_value=0, step=1),
                 "colaboradores": st.column_config.NumberColumn("Colaboradores", min_value=0, step=1),
                 "horas_ausencia": st.column_config.NumberColumn("Horas de ausência", min_value=0.0, step=0.5),
-                "horas_programadas": st.column_config.NumberColumn("Horas programadas", min_value=0.0, step=0.5),
+                "horas_programadas": st.column_config.NumberColumn("Horas programadas (1 = 220h)", min_value=0.0, step=1.0),
                 "vagas_em_aberto": st.column_config.NumberColumn("Vagas em aberto", min_value=0, step=1),
             },
             key="editor_lancamentos",
@@ -2683,6 +2687,7 @@ def render_history(df: pd.DataFrame) -> None:
             edited["data"] = pd.to_datetime(edited["data"], errors="coerce").dt.date
             numeric_columns = [column for column in COLUMNS if column != "data"]
             edited[numeric_columns] = edited[numeric_columns].apply(pd.to_numeric, errors="coerce").fillna(0)
+            edited["horas_programadas"] = edited["horas_programadas"].apply(programmed_hours_from_units)
             edited = edited.dropna(subset=["data"])
             save_data(edited)
             st.success(f"Alterações salvas {persistence_label()}.")
