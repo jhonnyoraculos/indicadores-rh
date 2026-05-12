@@ -15,7 +15,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Image as PdfImage
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy import Column, Date, Float, Integer, MetaData, Table as SQLATable, create_engine, delete, insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -1247,6 +1247,54 @@ def pdf_chart_image(figure: go.Figure | None, width_cm: float = 18.0) -> PdfImag
     return PdfImage(buffer, width=width_points, height=height_points)
 
 
+def prepare_pdf_figure(figure: go.Figure | None, chart_type: str) -> go.Figure | None:
+    if figure is None:
+        return None
+
+    prepared = go.Figure(figure)
+
+    if chart_type == "indicator":
+        prepared.update_layout(
+            width=1150,
+            height=620,
+            margin=dict(l=88, r=40, t=78, b=92),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            font=dict(size=20, color="#172033"),
+        )
+        prepared.update_xaxes(tickangle=0, automargin=True, tickfont=dict(size=18))
+        prepared.update_yaxes(
+            automargin=True,
+            title_standoff=16,
+            tickfont=dict(size=16),
+            title_font=dict(size=18),
+        )
+    elif chart_type == "rotativity":
+        prepared.update_layout(
+            width=1150,
+            height=620,
+            margin=dict(l=88, r=72, t=78, b=110),
+            legend=dict(orientation="h", yanchor="top", y=-0.14, xanchor="center", x=0.5),
+            font=dict(size=20, color="#172033"),
+        )
+        prepared.update_xaxes(tickangle=-28, automargin=True, tickfont=dict(size=18))
+        prepared.update_yaxes(
+            automargin=True,
+            title_standoff=16,
+            tickfont=dict(size=16),
+            title_font=dict(size=18),
+            secondary_y=False,
+        )
+        prepared.update_yaxes(
+            automargin=True,
+            title_standoff=16,
+            tickfont=dict(size=16),
+            title_font=dict(size=18),
+            secondary_y=True,
+        )
+
+    return prepared
+
+
 def build_pdf_report(
     summary: dict[str, float],
     grouped: pd.DataFrame,
@@ -1393,24 +1441,25 @@ def build_pdf_report(
     line_title = (
         "Indicadores por dia da semana"
         if analysis_type == "Semanal"
-        else f"Indicadores mÃªs a mÃªs - {period_text.split()[-1]}"
+        else f"Indicadores mes a mes - {period_text.split()[-1]}"
         if analysis_type == "Mensal"
         else "Indicadores ano a ano"
     )
     rotativity_title = (
-        "AdmissÃµes, desligamentos e turnover da semana"
+        "Admissoes, desligamentos e turnover da semana"
         if analysis_type == "Semanal"
         else f"Taxa de rotatividade - {period_text.split()[-1]}"
         if analysis_type == "Mensal"
         else "Taxa de rotatividade anual"
     )
     chart_images = [
-        pdf_chart_image(build_indicator_line_chart(grouped, line_title)),
-        pdf_chart_image(build_rotativity_chart(grouped, rotativity_title)),
+        pdf_chart_image(prepare_pdf_figure(build_indicator_line_chart(grouped, line_title), "indicator")),
+        pdf_chart_image(prepare_pdf_figure(build_rotativity_chart(grouped, rotativity_title), "rotativity")),
     ]
     chart_images = [chart for chart in chart_images if chart is not None]
 
-    elements.append(Paragraph("GrÃ¡ficos do perÃ­odo", styles["SectionTitle"]))
+    elements.append(PageBreak())
+    elements.append(Paragraph("Graficos do periodo", styles["SectionTitle"]))
     if chart_images:
         for chart_image in chart_images:
             elements.append(chart_image)
@@ -1418,7 +1467,7 @@ def build_pdf_report(
     else:
         elements.append(
             Paragraph(
-                "NÃ£o foi possÃ­vel incorporar os grÃ¡ficos ao PDF neste ambiente.",
+                "Nao foi possivel incorporar os graficos ao PDF neste ambiente.",
                 styles["BodySmall"],
             )
         )
