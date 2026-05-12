@@ -27,6 +27,7 @@ BASE_DIR = Path(__file__).parent
 LOGO_PATH = BASE_DIR / "logo-jr.png"
 LEGACY_CSV_PATH = BASE_DIR / "dados_indicadores_rh.csv"
 TABLE_NAME = "indicadores_rh"
+ATESTADO_HOURS = 8.0
 
 COLUMNS = [
     "data",
@@ -297,6 +298,10 @@ def escape_pdf_text(value: object) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def absence_hours_with_certificates(hours_ausencia: float, atestados: float) -> float:
+    return float(hours_ausencia) + float(atestados) * ATESTADO_HOURS
+
+
 def add_calculated_columns(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df.copy()
@@ -309,7 +314,7 @@ def add_calculated_columns(df: pd.DataFrame) -> pd.DataFrame:
         axis=1,
     )
     result["absenteismo_%"] = result.apply(
-        lambda row: (row["horas_ausencia"] / row["horas_programadas"] * 100)
+        lambda row: (absence_hours_with_certificates(row["horas_ausencia"], row["atestados"]) / row["horas_programadas"] * 100)
         if row["horas_programadas"] > 0
         else 0,
         axis=1,
@@ -324,6 +329,7 @@ def overall_summary(df: pd.DataFrame) -> dict[str, float]:
             "admissoes": 0,
             "turnover": 0,
             "horas_ausencia": 0,
+            "horas_ausencia_informada": 0,
             "absenteismo": 0,
             "atestados": 0,
             "vagas_em_aberto": 0,
@@ -337,14 +343,16 @@ def overall_summary(df: pd.DataFrame) -> dict[str, float]:
     horas_ausencia = sorted_df["horas_ausencia"].sum()
     horas_programadas = sorted_df["horas_programadas"].sum()
     atestados = sorted_df["atestados"].sum()
+    horas_ausencia_calculada = absence_hours_with_certificates(horas_ausencia, atestados)
     vagas_em_aberto = float(sorted_df.iloc[-1]["vagas_em_aberto"]) if not sorted_df.empty else 0.0
 
     return {
         "desligamentos": desligamentos,
         "admissoes": admissoes,
         "turnover": (desligamentos / colaboradores * 100) if colaboradores > 0 else 0,
-        "horas_ausencia": horas_ausencia,
-        "absenteismo": (horas_ausencia / horas_programadas * 100) if horas_programadas > 0 else 0,
+        "horas_ausencia": horas_ausencia_calculada,
+        "horas_ausencia_informada": horas_ausencia,
+        "absenteismo": (horas_ausencia_calculada / horas_programadas * 100) if horas_programadas > 0 else 0,
         "atestados": atestados,
         "vagas_em_aberto": vagas_em_aberto,
         "registros": len(sorted_df),
@@ -408,6 +416,7 @@ def grouped_data(df: pd.DataFrame, grouping: str) -> pd.DataFrame:
         horas_programadas = group["horas_programadas"].sum()
         atestados = group["atestados"].sum()
         vagas_em_aberto = group["vagas_em_aberto"].iloc[-1]
+        horas_ausencia_calculada = absence_hours_with_certificates(horas_ausencia, atestados)
 
         rows.append(
             {
@@ -419,9 +428,9 @@ def grouped_data(df: pd.DataFrame, grouping: str) -> pd.DataFrame:
                 "turnover_%": (desligamentos / colaboradores * 100)
                 if colaboradores > 0
                 else 0,
-                "horas_ausencia": horas_ausencia,
+                "horas_ausencia": horas_ausencia_calculada,
                 "horas_programadas": horas_programadas,
-                "absenteismo_%": (horas_ausencia / horas_programadas * 100)
+                "absenteismo_%": (horas_ausencia_calculada / horas_programadas * 100)
                 if horas_programadas > 0
                 else 0,
                 "atestados": atestados,
@@ -529,6 +538,7 @@ def period_summary(df: pd.DataFrame) -> dict[str, float]:
             "rotatividade_demissional": 0.0,
             "rotatividade": 0.0,
             "horas_ausencia": 0.0,
+            "horas_ausencia_informada": 0.0,
             "horas_programadas": 0.0,
             "absenteismo": 0.0,
             "atestados": 0.0,
@@ -541,6 +551,7 @@ def period_summary(df: pd.DataFrame) -> dict[str, float]:
     horas_ausencia = df["horas_ausencia"].sum()
     horas_programadas = df["horas_programadas"].sum()
     atestados = df["atestados"].sum()
+    horas_ausencia_calculada = absence_hours_with_certificates(horas_ausencia, atestados)
     vagas_em_aberto = float(df.sort_values("data").iloc[-1]["vagas_em_aberto"]) if not df.empty else 0.0
     rotatividade_admissional = (admissoes / colaboradores * 100) if colaboradores > 0 else 0.0
     rotatividade_demissional = (desligamentos / colaboradores * 100) if colaboradores > 0 else 0.0
@@ -553,9 +564,10 @@ def period_summary(df: pd.DataFrame) -> dict[str, float]:
         "rotatividade_admissional": rotatividade_admissional,
         "rotatividade_demissional": rotatividade_demissional,
         "rotatividade": rotatividade_admissional + rotatividade_demissional,
-        "horas_ausencia": horas_ausencia,
+        "horas_ausencia": horas_ausencia_calculada,
+        "horas_ausencia_informada": horas_ausencia,
         "horas_programadas": horas_programadas,
-        "absenteismo": (horas_ausencia / horas_programadas * 100) if horas_programadas > 0 else 0.0,
+        "absenteismo": (horas_ausencia_calculada / horas_programadas * 100) if horas_programadas > 0 else 0.0,
         "atestados": atestados,
         "vagas_em_aberto": vagas_em_aberto,
     }
@@ -634,7 +646,7 @@ def weekly_data(df: pd.DataFrame, reference: date) -> tuple[pd.DataFrame, dict[s
         axis=1,
     )
     daily["absenteismo_%"] = daily.apply(
-        lambda row: (row["horas_ausencia"] / row["horas_programadas"] * 100)
+        lambda row: (absence_hours_with_certificates(row["horas_ausencia"], row["atestados"]) / row["horas_programadas"] * 100)
         if row["horas_programadas"] > 0
         else 0.0,
         axis=1,
@@ -1112,9 +1124,9 @@ def render_diagnostics(summary: dict[str, float], grouped: pd.DataFrame) -> None
                 <p class="text">Admissões menos desligamentos no período.</p>
             </div>
             <div class="diagnostic-card">
-                <div class="label">Horas ausentes</div>
+                <div class="label">Horas consideradas</div>
                 <div class="value">{format_number(summary["horas_ausencia"])}</div>
-                <p class="text">Total de horas de ausência registradas.</p>
+                <p class="text">Horas de ausência mais {format_number(summary["atestados"])} atestados x {format_number(ATESTADO_HOURS)}h.</p>
             </div>
             <div class="diagnostic-card">
                 <div class="label">Horas programadas</div>
@@ -1198,7 +1210,7 @@ def format_display_table(df: pd.DataFrame) -> pd.DataFrame:
         "desligamentos": "Desligamentos",
         "colaboradores": "Colaboradores",
         "turnover_%": "Turnover",
-        "horas_ausencia": "Horas de ausência",
+        "horas_ausencia": "Horas consideradas",
         "horas_programadas": "Horas programadas",
         "absenteismo_%": "Absenteísmo",
         "atestados": "Atestados",
@@ -1493,8 +1505,8 @@ def build_pdf_report(
             [
                 ["Indicador", "Resultado", "Leitura"],
                 ["Turnover", format_percent(summary["turnover"]), f"{risk} risco"],
-                ["Absenteísmo", format_percent(summary["absenteismo"]), "Horas ausentes / horas programadas"],
-                ["Atestados", format_number(summary["atestados"]), "Quantidade de atestados registrada no período"],
+                ["Absenteísmo", format_percent(summary["absenteismo"]), "((Horas de ausência) + atestados x 8h) / horas programadas"],
+                ["Atestados", format_number(summary["atestados"]), "Cada atestado soma 8 horas no cálculo do absenteísmo"],
                 ["Rotatividade", format_percent(summary["rotatividade"]), "Admissões + desligamentos sobre colaboradores"],
                 ["Admissões", format_number(summary["admissoes"]), "Entradas no período"],
                 ["Desligamentos", format_number(summary["desligamentos"]), "Saídas no período"],
@@ -1611,7 +1623,7 @@ def build_pdf_report(
             "Desligamentos": 1.75 * cm,
             "Colaboradores": 1.9 * cm,
             "Turnover": 1.7 * cm,
-            "Horas de ausência": 1.9 * cm,
+            "Horas consideradas": 1.9 * cm,
             "Horas programadas": 2.0 * cm,
             "Absenteísmo": 1.8 * cm,
             "Atestados": 1.5 * cm,
@@ -2212,7 +2224,7 @@ def render_form(df: pd.DataFrame) -> pd.DataFrame:
                 "Horas de ausência",
                 min_value=0.0,
                 step=0.5,
-                help="Faltas, atrasos, atestados e saídas antecipadas em horas.",
+                help="Faltas, atrasos e saídas antecipadas em horas. Os atestados entram separadamente com 8 horas por unidade.",
             )
         with col7:
             horas_programadas = st.number_input(
@@ -2272,7 +2284,7 @@ def render_fill_guide() -> None:
             </div>
             <div class="formula-card">
                 <strong>Absenteísmo</strong>
-                <span>Horas de ausência / Horas programadas x 100</span>
+                <span>(Horas de ausência + atestados x 8h) / Horas programadas x 100</span>
             </div>
         </div>
         """,
@@ -2301,7 +2313,7 @@ def render_summary(df: pd.DataFrame) -> None:
         render_metric_card(
             "Absenteísmo geral",
             format_percent(summary["absenteismo"]),
-            "Horas ausentes em relação às horas programadas.",
+            "Horas de ausência mais atestados convertidos em 8h, sobre as horas programadas.",
             "green",
         )
     with metric3:
@@ -2326,7 +2338,7 @@ def render_week_status(summary: dict[str, float], start: date, end: date) -> Non
     with metric1:
         render_metric_card("Turnover", format_percent(summary["turnover"]), "Resultado da semana.", "blue")
     with metric2:
-        render_metric_card("Absenteísmo", format_percent(summary["absenteismo"]), "Resultado da semana.", "green")
+        render_metric_card("Absenteísmo", format_percent(summary["absenteismo"]), "Inclui 8 horas por atestado.", "green")
     with metric3:
         render_metric_card("Admissões", format_number(summary["admissoes"]), "Entradas na semana.", "red")
     with metric4:
