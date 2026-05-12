@@ -1193,40 +1193,65 @@ def format_history_table(df: pd.DataFrame) -> pd.DataFrame:
     return result.rename(columns=rename_map)
 
 
-def pdf_table(data: list[list[object]], col_widths: list[float] | None = None) -> Table:
+def pdf_table(
+    data: list[list[object]],
+    col_widths: list[float] | None = None,
+    emphasis_cols: list[int] | None = None,
+) -> Table:
+    emphasis_cols = emphasis_cols or []
     header_style = ParagraphStyle(
         name="PdfTableHeader",
         fontName="Helvetica-Bold",
-        fontSize=8,
-        leading=10,
-        textColor=colors.HexColor("#172033"),
+        fontSize=8.4,
+        leading=10.5,
+        textColor=colors.white,
     )
     body_style = ParagraphStyle(
         name="PdfTableBody",
         fontName="Helvetica",
-        fontSize=8,
-        leading=10,
+        fontSize=8.2,
+        leading=10.5,
         textColor=colors.HexColor("#172033"),
     )
+    emphasis_style = ParagraphStyle(
+        name="PdfTableEmphasis",
+        parent=body_style,
+        fontName="Helvetica-Bold",
+        textColor=colors.HexColor("#103b78"),
+    )
     table_data = [
-        [Paragraph(escape_pdf_text(cell), header_style if row_index == 0 else body_style) for cell in row]
+        [
+            Paragraph(
+                escape_pdf_text(cell),
+                header_style
+                if row_index == 0
+                else emphasis_style
+                if col_index in emphasis_cols
+                else body_style,
+            )
+            for col_index, cell in enumerate(row)
+        ]
         for row_index, row in enumerate(data)
     ]
     table = Table(table_data, colWidths=col_widths, repeatRows=1)
     table.setStyle(
         TableStyle(
             [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f3f5f8")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#172033")),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#103b78")),
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
                 ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
-                ("FONTSIZE", (0, 0), (-1, -1), 8),
-                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#d9e2ee")),
+                ("FONTSIZE", (0, 0), (-1, -1), 8.2),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#fbfcfe"), colors.HexColor("#f4f7fb")]),
+                ("BOX", (0, 0), (-1, -1), 0.45, colors.HexColor("#d7e2ef")),
+                ("LINEBELOW", (0, 0), (-1, 0), 0.75, colors.HexColor("#d7e2ef")),
+                ("LINEBELOW", (0, 1), (-1, -1), 0.35, colors.HexColor("#dfe7f1")),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("LEFTPADDING", (0, 0), (-1, -1), 7),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+                ("TOPPADDING", (0, 0), (-1, 0), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 7),
+                ("TOPPADDING", (0, 1), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 1), (-1, -1), 6),
             ]
         )
     )
@@ -1397,6 +1422,7 @@ def build_pdf_report(
                 ["Colaboradores", format_number(summary["colaboradores"]), "Média do total informado"],
             ],
             col_widths=[5.2 * cm, 4.0 * cm, 7.2 * cm],
+            emphasis_cols=[1],
         )
     )
 
@@ -1412,6 +1438,7 @@ def build_pdf_report(
                 ["Recomendação", rec_title, rec_text],
             ],
             col_widths=[4.0 * cm, 4.2 * cm, 8.2 * cm],
+            emphasis_cols=[1],
         )
     )
 
@@ -1439,6 +1466,7 @@ def build_pdf_report(
                 ["Movimentação", "Desligamentos", format_number(summary["desligamentos"])],
             ],
             col_widths=[5.0 * cm, 7.4 * cm, 4.0 * cm],
+            emphasis_cols=[2],
         )
     )
 
