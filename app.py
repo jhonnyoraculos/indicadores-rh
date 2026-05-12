@@ -14,8 +14,8 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
-from reportlab.platypus import Image as PdfImage
-from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import CondPageBreak, Image as PdfImage
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy import Column, Date, Float, Integer, MetaData, Table as SQLATable, create_engine, delete, insert, inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -1598,7 +1598,7 @@ def build_pdf_report(
     ]
     chart_images = [chart for chart in chart_images if chart is not None]
 
-    elements.append(PageBreak())
+    elements.append(CondPageBreak(11 * cm))
     elements.append(Paragraph("Graficos do periodo", styles["SectionTitle"]))
     if chart_images:
         for chart_image in chart_images:
