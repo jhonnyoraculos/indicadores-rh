@@ -4,4 +4,4 @@ plotly>=5.20
 reportlab>=4.2
 sqlalchemy>=2.0
 psycopg[binary]>=3.2
-kaleido>=0.2.1
+kaleido==0.2.1
