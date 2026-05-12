@@ -2616,18 +2616,14 @@ def render_dashboard(df: pd.DataFrame) -> None:
             width="stretch",
         )
 
-    left, right = st.columns([0.26, 0.74])
-    with left:
-        st.markdown("**Rotatividade do período**")
-        st.plotly_chart(build_rotativity_pie(summary), width="stretch", config={"displayModeBar": False})
-
-    with right:
-        line_chart = build_indicator_line_chart(grouped, line_title)
-        if line_chart is not None:
-            st.plotly_chart(line_chart, width="stretch", config={"displayModeBar": False})
-        render_risk_scale(reference_turnover, reference_period)
+    line_chart = build_indicator_line_chart(grouped, line_title)
+    if line_chart is not None:
+        st.plotly_chart(line_chart, width="stretch", config={"displayModeBar": False})
+    render_risk_scale(reference_turnover, reference_period)
 
     render_diagnostics(summary, grouped, reference_summary)
+    st.markdown("**Rotatividade do período**")
+    st.plotly_chart(build_rotativity_pie(summary), width="stretch", config={"displayModeBar": False})
     render_executive_blocks(summary, selected_df)
 
     rotativity_chart = build_rotativity_chart(grouped, rotativity_title)
